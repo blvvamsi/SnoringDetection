@@ -1,200 +1,121 @@
-package com.example.buddh.snoringdetection;
+ackage com.buddh.snoringdetection
 
-import android.Manifest;
-import android.content.pm.PackageManager;
-import android.media.MediaRecorder;
-import android.os.AsyncTask;
-import android.os.Environment;
-import android.os.Handler;
-import android.os.ParcelFileDescriptor;
-import android.support.annotation.NonNull;
-import android.support.v4.app.ActivityCompat;
-import android.support.v7.app.AppCompatActivity;
-import android.os.Bundle;
-import android.view.View;
-import android.widget.Button;
-import android.widget.TextView;
-import android.widget.Toast;
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.MediaRecorder
+import android.support.v7.app.AppCompatActivity
+import android.os.Bundle
+import android.support.v4.app.ActivityCompat
+import android.view.View
+import android.widget.Button
+import android.media.AudioRecord
+import android.widget.TextView
+import com.naganithin.fft.FFT
 
-import com.jjoe64.graphview.GraphView;
-import com.jjoe64.graphview.series.DataPoint;
-import com.jjoe64.graphview.series.LineGraphSeries;
 
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.PrintWriter;
+class MainActivity : AppCompatActivity() {
 
-public class MainActivity extends AppCompatActivity {
+    private val requestCodeP = 0
+    private var recording = false
+    private val SAMPLE_RATE = 44100
 
-    private int requestCodeP = 0;
-    private final Handler mHandler = new Handler();
-    private Runnable mTimer;
-    private int lastX = 0;
-    private LineGraphSeries<DataPoint> series;
-    private GetAudio getAudio;
-    private final int maxPoints = 250;
-    Button bstart, bstop;
-    TextView snor;
-    int state = 0;
-    PrintWriter f0;
-    String filename;
-
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-        String [] permissions = {Manifest.permission.RECORD_AUDIO, Manifest.permission.WRITE_EXTERNAL_STORAGE};
-        ActivityCompat.requestPermissions(this, permissions, requestCodeP);
-        bstart = (Button)findViewById(R.id.start);
-        bstop = (Button)findViewById(R.id.stop);
-        bstop.setEnabled(false);
-        snor = (TextView)findViewById(R.id.textView);
-        series = new LineGraphSeries<>();
-        series.appendData(new DataPoint(0, 0), true, maxPoints);
-        GraphView graph = (GraphView)findViewById(R.id.graph);
-        graph.addSeries(series);
-        graph.getViewport().setXAxisBoundsManual(true);
-        graph.getViewport().setMinX(0);
-        graph.getViewport().setMaxX(maxPoints);
-        getAudio = new GetAudio();
-        getAudio.execute();
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        val permissions = arrayOf(Manifest.permission.RECORD_AUDIO)
+        ActivityCompat.requestPermissions(this, permissions, requestCodeP)
     }
 
-    public void start(View v) {
-        try {
-            File myDir = new File(Environment.getExternalStorageDirectory(), "rec_data/");
-            filename = "rec_data_"+System.currentTimeMillis()+".txt";
-            boolean res = myDir.mkdirs();
-            File file = new File(myDir, filename);
-            res = res ^ file.createNewFile();
-            f0 = new PrintWriter(new FileWriter(file));
-            System.out.println(res);
-            state = 1;
-            snor.setText(getString(R.string.snoring));
-            bstart.setEnabled(false);
-            bstop.setEnabled(true);
-            Toast.makeText(getApplicationContext(), "Started Recording", Toast.LENGTH_SHORT).show();
-        }
-        catch (IOException e) {
-            Toast.makeText(getApplicationContext(), "File I/O Error", Toast.LENGTH_SHORT).show();
-        }
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == requestCodeP && grantResults[0] != PackageManager.PERMISSION_GRANTED)
+            ActivityCompat.requestPermissions(this, permissions, requestCodeP)
     }
 
-    public void stop(View v) {
-        state = 0;
-        snor.setText(getString(R.string.not_snoring));
-        bstart.setEnabled(true);
-        bstop.setEnabled(false);
-        Toast.makeText(getApplicationContext(), "Saved at "+filename, Toast.LENGTH_SHORT).show();
-        f0.flush();
-        f0.close();
-    }
+    fun startRec() {
+        Thread(Runnable {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == requestCodeP) {
-            if(grantResults.length!=0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) System.out.print("success");
-            else ActivityCompat.requestPermissions(this, permissions, requestCodeP);
-        }
-    }
+            var bufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT)
+            if (bufferSize == AudioRecord.ERROR || bufferSize == AudioRecord.ERROR_BAD_VALUE) {
+                bufferSize = SAMPLE_RATE * 2
+            }
 
-    protected void onResume() {
-        super.onResume();
-        mTimer = new Runnable() {
-            @Override
-            public void run() {
-                ByteArrayOutputStream byteArrayOutputStream = getAudio.getByteArrayOutputStream();
-                if (byteArrayOutputStream != null) {
-                    System.out.println(byteArrayOutputStream.size());
-                    for (Byte i : byteArrayOutputStream.toByteArray()) {
-                        lastX++;
-                        if(state==1) {
-                            f0.println(i);
+            val record = AudioRecord(MediaRecorder.AudioSource.DEFAULT,
+                    SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize)
+
+            val audioBuffer = ShortArray(bufferSize / 2)
+
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                return@Runnable
+            }
+            record.startRecording()
+
+            var shortsRead: Long = 0
+            val fft = FFT(1024)
+            var snore = 0
+            val text = findViewById<TextView>(R.id.textView)
+
+            while (recording) {
+                val numberOfShort = record.read(audioBuffer, 0, audioBuffer.size)
+                shortsRead += numberOfShort.toLong()
+
+                val y = DoubleArray(1024)
+                val x = audioBuffer.map { it.toDouble() }.toDoubleArray()
+
+                fft.fft(x, y)
+                val j = PES(x)
+
+                if (j==1) {
+                    snore++
+                    if (snore>5) {
+                        runOnUiThread {
+                            text.text = getString(R.string.yes)
+                            snore = 0
+                            Thread.sleep(2000)
                         }
-                        series.appendData(new DataPoint(lastX, i), true, maxPoints);
                     }
-                    byteArrayOutputStream.reset();
                 }
-                mHandler.postDelayed(this, 50);
+                else {
+                    snore = 0
+                    runOnUiThread { text.text = getString(R.string.no) }
+                }
             }
-        };
-        mHandler.postDelayed(mTimer, 1000);
+            record.stop()
+            record.release()
+            runOnUiThread { text.text = "" }
+        }).start()
     }
 
-    @Override
-    protected void onPause() {
-        mHandler.removeCallbacks(mTimer);
-        if(state==1) stop(new View(this));
-        super.onPause();
+    fun PES(a: DoubleArray): Int {
+        val E_L = (0..51).sumByDouble { a[it] * a[it] }
+        val E_H = (53..511).sumByDouble { a[it] * a[it] }
+        val pes = E_L / (E_L + E_H)
+        if (pes < 0.65)
+            return 1
+        else
+            return 0
     }
 
-}
-
-
-
-class GetAudio extends AsyncTask<String, Void, String> {
-
-    private ByteArrayOutputStream byteArrayOutputStream;
-    private InputStream inputStream;
-    private MediaRecorder recorder;
-
-    ByteArrayOutputStream getByteArrayOutputStream() {
-        return byteArrayOutputStream;
-    }
-
-    @Override
-    protected void onPreExecute() {
-        super.onPreExecute();
-        try {
-            byteArrayOutputStream = new ByteArrayOutputStream();
-
-            ParcelFileDescriptor[] descriptors = ParcelFileDescriptor.createPipe();
-            ParcelFileDescriptor parcelRead = new ParcelFileDescriptor(descriptors[0]);
-            ParcelFileDescriptor parcelWrite = new ParcelFileDescriptor(descriptors[1]);
-
-            inputStream = new ParcelFileDescriptor.AutoCloseInputStream(parcelRead);
-
-            recorder = new MediaRecorder();
-            recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-            recorder.setOutputFormat(MediaRecorder.OutputFormat.AMR_NB);
-            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB);
-            recorder.setOutputFile(parcelWrite.getFileDescriptor());
-            recorder.prepare();
-
-            recorder.start();
+    fun record(v: View) {
+        recording = !recording
+        val button = findViewById<Button>(R.id.button)
+        val text = findViewById<TextView>(R.id.textView)
+        if (recording) {
+            button.text = getString(R.string.stop)
+            text.text = getString(R.string.no)
+            startRec()
         }
-        catch (IOException e) {
-            e.printStackTrace();
+        else {
+            button.text = getString(R.string.start)
         }
-
+        print(v)
     }
 
-    @Override
-    protected String doInBackground(String... params) {
-        int read;
-        byte[] data = new byte[16384];
-        try {
-            while ((read = inputStream.read(data, 0, data.length)) != -1) {
-                byteArrayOutputStream.write(data, 0, read);
-            }
-            System.out.println(byteArrayOutputStream);
-            byteArrayOutputStream.flush();
-        }
-        catch (IOException e) {
-            e.printStackTrace();
-        }
-        return null;
-    }
-
-    @Override
-    protected void onPostExecute(String s) {
-        recorder.stop();
-        recorder.reset();
-        recorder.release();
-        super.onPostExecute(s);
-    }
 }
