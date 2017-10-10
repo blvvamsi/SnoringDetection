@@ -1,4 +1,4 @@
-package com.example.buddh.snoresensor;
+package com.example.buddh.snoringdetection;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
