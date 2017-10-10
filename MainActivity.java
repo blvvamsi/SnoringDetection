@@ -11,7 +11,7 @@ import android.view.View
 import android.widget.Button
 import android.media.AudioRecord
 import android.widget.TextView
-import com.naganithin.fft.FFT
+import com.buddh.fft.FFT
 
 
 class MainActivity : AppCompatActivity() {
